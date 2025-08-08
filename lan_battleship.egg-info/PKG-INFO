@@ -1,7 +1,7 @@
 Metadata-Version: 2.4
 Name: lan-battleship
 Version: 0.1.0
-Summary: Two-player Battleship over LAN in the terminal
+Summary: Two-player Battleship over LAN (GUI)
 Classifier: Programming Language :: Python :: 3
 Classifier: Programming Language :: Python :: 3 :: Only
 Classifier: Environment :: Console
@@ -11,9 +11,11 @@ Classifier: License :: OSI Approved :: MIT License
 Classifier: Operating System :: OS Independent
 Requires-Python: >=3.9
 Description-Content-Type: text/markdown
+Requires-Dist: pygame>=2.5.0
 Dynamic: classifier
 Dynamic: description
 Dynamic: description-content-type
+Dynamic: requires-dist
 Dynamic: requires-python
 Dynamic: summary
 

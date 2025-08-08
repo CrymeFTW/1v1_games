@@ -6,7 +6,7 @@ README = (Path(__file__).parent / "README.md").read_text(encoding="utf-8")
 setup(
     name="lan-battleship",
     version="0.1.0",
-    description="Two-player Battleship over LAN (Terminal and GUI)",
+    description="Two-player Battleship over LAN (GUI)",
     long_description=README,
     long_description_content_type="text/markdown",
     packages=find_packages(exclude=("tests", "docs", "examples")),
@@ -16,7 +16,9 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "battleship=battleship.cli:main",
+            "battleship=battleship.gui:run_host_gui_main",
+            "battleship-host=battleship.gui:run_host_gui_main",
+            "battleship-join=battleship.gui:run_client_gui_main",
         ]
     },
     classifiers=[

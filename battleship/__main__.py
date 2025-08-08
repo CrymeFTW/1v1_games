@@ -1,4 +1,4 @@
-from .cli import main
+from .gui import run_host_gui_main
 
 if __name__ == "__main__":
-    main()
+    run_host_gui_main()

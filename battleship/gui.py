@@ -5,6 +5,7 @@ import queue
 import time
 import sys
 import math
+import os
 from typing import Optional, Tuple, List
 
 import pygame
@@ -22,25 +23,54 @@ class NetworkPeer:
         self.recv_thread: Optional[threading.Thread] = None
         self.recv_queue: "queue.Queue[dict]" = queue.Queue()
         self.stopped = threading.Event()
-        self._connect(host, port, bind)
+        self.connected = False
 
-    def _connect(self, host: Optional[str], port: int, bind: str) -> None:
+        # Start network setup in background so GUI can render immediately
         if self.mode == "host":
-            self.srv, self.sock, _addr = open_server(bind, port)
+            threading.Thread(target=self._host_wait_for_client, args=(bind, port), daemon=True).start()
+        else:
+            threading.Thread(target=self._client_connect, args=(host, port), daemon=True).start()
+
+    def _host_wait_for_client(self, bind: str, port: int) -> None:
+        try:
+            srv, conn, _addr = open_server(bind, port)
+            if self.stopped.is_set():
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                try:
+                    srv.close()
+                except Exception:
+                    pass
+                return
+            self.srv = srv
+            self.sock = conn
             send_msg(self.sock, {"type": "hello", "role": "host", "proto": PROTO_VERSION})
             hello = recv_msg(self.sock)
             if hello.get("type") != "hello" or hello.get("proto") != PROTO_VERSION:
                 raise RuntimeError("protocol mismatch")
             # host decides who starts (host starts)
             send_msg(self.sock, {"type": "start", "youStart": False})
-        else:
+            self.connected = True
+            self._start_recv_loop()
+        except Exception:
+            # On failure, leave not connected; caller may quit
+            pass
+
+    def _client_connect(self, host: Optional[str], port: int) -> None:
+        try:
             self.sock = open_client(host or "localhost", port)
             # handshake
             hello = recv_msg(self.sock)
             if hello.get("type") != "hello" or hello.get("proto") != PROTO_VERSION:
                 raise RuntimeError("protocol mismatch")
             send_msg(self.sock, {"type": "hello", "role": "client", "proto": PROTO_VERSION})
-        self._start_recv_loop()
+            self.connected = True
+            self._start_recv_loop()
+        except Exception:
+            # connection failed; leave not connected so GUI can show status
+            pass
 
     def _start_recv_loop(self) -> None:
         def loop() -> None:
@@ -56,7 +86,7 @@ class NetworkPeer:
         self.recv_thread.start()
 
     def send(self, payload: dict) -> None:
-        if self.sock is None:
+        if self.sock is None or not self.connected:
             return
         send_msg(self.sock, payload)
 
@@ -129,7 +159,11 @@ class GuiGame:
 
         self.running = True
         self.turn_is_mine: Optional[bool] = None
-        self.info_message = "Place your fleet"
+        # Initial status
+        if mode == "host":
+            self.info_message = "Waiting for player to connect..."
+        else:
+            self.info_message = "Place your fleet"
         self.message_timer: float = 0.0
         self.awaiting_result = False
         self.game_over: Optional[str] = None  # 'win' or 'lose'
@@ -345,7 +379,10 @@ class GuiGame:
                                 pass
                         self.running = False
                 elif event.type == pygame.MOUSEBUTTONDOWN and self.game_over is None:
-                    if self.placing_index < len(SHIP_TYPES):
+                    # While hosting and not connected yet, ignore clicks
+                    if self.mode == "host" and not self.peer.connected:
+                        pass
+                    elif self.placing_index < len(SHIP_TYPES):
                         if event.button == 1:
                             self.place_ships_handle_click(event.pos)
                         elif event.button == 3:
@@ -403,6 +440,10 @@ class GuiGame:
                     self.turn_is_mine = False
                 msg = self.peer.try_get(0.0)
 
+            # Update status while waiting for connection
+            if self.mode == "host" and not self.peer.connected:
+                self.info_message = "Waiting for player to connect..."
+
             # Transition to gameplay after both placed and start known
             if placement_done_local and placement_done_remote and (self.mode == "host" or self.you_start is not None):
                 if self.turn_is_mine:
@@ -427,3 +468,21 @@ def run_host_gui(port: int, bind: str = "0.0.0.0") -> None:
 def run_client_gui(host: str, port: int) -> None:
     game = GuiGame("client", host=host, port=port)
     game.run()
+
+
+def run_host_gui_main() -> None:
+    import argparse
+    parser = argparse.ArgumentParser(description="LAN Battleship GUI - Host")
+    parser.add_argument("--port", type=int, default=5000)
+    parser.add_argument("--bind", type=str, default="0.0.0.0")
+    args = parser.parse_args()
+    run_host_gui(port=args.port, bind=args.bind)
+
+
+def run_client_gui_main() -> None:
+    import argparse
+    parser = argparse.ArgumentParser(description="LAN Battleship GUI - Join")
+    parser.add_argument("host", type=str, help="Host IP or name")
+    parser.add_argument("--port", type=int, default=5000)
+    args = parser.parse_args()
+    run_client_gui(host=args.host, port=args.port)
