@@ -6,12 +6,14 @@ README = (Path(__file__).parent / "README.md").read_text(encoding="utf-8")
 setup(
     name="lan-battleship",
     version="0.1.0",
-    description="Two-player Battleship over LAN in the terminal",
+    description="Two-player Battleship over LAN (Terminal and GUI)",
     long_description=README,
     long_description_content_type="text/markdown",
     packages=find_packages(exclude=("tests", "docs", "examples")),
     python_requires=">=3.9",
-    install_requires=[],  # stdlib only
+    install_requires=[
+        "pygame>=2.5.0",
+    ],
     entry_points={
         "console_scripts": [
             "battleship=battleship.cli:main",

@@ -79,7 +79,6 @@ def run_host(bind: str, port: int) -> None:
                     sunk_name = None
                 else:
                     hit, sunk, sunk_name = my_board.receive_attack(r, c)
-                hit, sunk, sunk_name = my_board.receive_attack(r, c)
                 game_over = my_board.all_sunk()
                 send_msg(conn, {"type": "result", "row": r, "col": c, "hit": hit, "sunk": sunk_name, "gameOver": game_over})
                 if game_over:
