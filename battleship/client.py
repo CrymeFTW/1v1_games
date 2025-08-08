@@ -60,7 +60,8 @@ def run_client(host: str, port: int) -> None:
                 if res.get("gameOver"):
                     announce("You win! 🎉")
                     break
-                your_turn = False
+                # Keep your turn on hit, otherwise pass turn
+                your_turn = hit
             else:
                 msg = recv_msg(sock)
                 if msg.get("type") == "quit":
@@ -81,7 +82,8 @@ def run_client(host: str, port: int) -> None:
                 if game_over:
                     announce("You lose.")
                     break
-                your_turn = True
+                # You get the turn only if opponent missed
+                your_turn = (not hit)
     finally:
         try:
             sock.close()

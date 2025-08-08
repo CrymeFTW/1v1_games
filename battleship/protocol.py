@@ -8,5 +8,6 @@ from __future__ import annotations
 # - fire: { type: 'fire', row: int, col: int }
 # - result: { type: 'result', row: int, col: int, hit: bool, sunk: str|null, gameOver: bool }
 # - quit: { type: 'quit' }
+# - restart: { type: 'restart' }  # initiate a new game on the same connection
 
 PROTO_VERSION = 1

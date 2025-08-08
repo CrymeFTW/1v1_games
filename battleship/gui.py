@@ -167,6 +167,12 @@ class GuiGame:
         self.message_timer: float = 0.0
         self.awaiting_result = False
         self.game_over: Optional[str] = None  # 'win' or 'lose'
+        # Restart coordination flags
+        self.restart_requested_local = False
+        self.restart_requested_remote = False
+        # Placement coordination flags (persist across rounds)
+        self.placement_done_local = False
+        self.placement_done_remote = False
 
         # If client, we must receive 'start' to know who begins
         if self.mode == "client":
@@ -238,6 +244,9 @@ class GuiGame:
             color = VICTORY if self.game_over == "win" else DEFEAT
             surf = self.font_big.render(banner, True, color)
             self.screen.blit(surf, (self.screen.get_width() // 2 - surf.get_width() // 2, 8))
+            # Restart hint
+            hint = self.font_small.render("Press N for a rematch", True, SUBTEXT)
+            self.screen.blit(hint, (self.screen.get_width() // 2 - hint.get_width() // 2, 52))
 
         pygame.display.flip()
 
@@ -356,8 +365,8 @@ class GuiGame:
             self.you_start = None
             self.turn_is_mine = None
 
-        placement_done_local = False
-        placement_done_remote = False
+        self.placement_done_local = False
+        self.placement_done_remote = False
 
         while self.running:
             for event in pygame.event.get():
@@ -371,6 +380,15 @@ class GuiGame:
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_r and self.game_over is None and self.placing_index < len(SHIP_TYPES):
                         self.horizontal = not self.horizontal
+                    # Rematch
+                    if event.key == pygame.K_n and self.game_over is not None:
+                        if not self.restart_requested_local:
+                            self.restart_requested_local = True
+                            self.show_message("Rematch requested. Waiting for opponent...", 3.0)
+                            try:
+                                self.peer.send({"type": "restart"})
+                            except Exception:
+                                pass
                     if event.key == pygame.K_ESCAPE:
                         if not self.game_over:
                             try:
@@ -392,15 +410,15 @@ class GuiGame:
                             self.click_fire(event.pos)
 
             # After sending place_done, wait for opponent's place_done too
-            if self.placing_index >= len(SHIP_TYPES) and not placement_done_local:
-                placement_done_local = True
+            if self.placing_index >= len(SHIP_TYPES) and not self.placement_done_local:
+                self.placement_done_local = True
 
             # Poll incoming messages
             msg = self.peer.try_get(0.0)
             while msg is not None:
                 mtype = msg.get("type")
                 if mtype == "place_done":
-                    placement_done_remote = True
+                    self.placement_done_remote = True
                 elif mtype == "start":
                     # only client expects this here
                     self.you_start = bool(msg.get("youStart"))
@@ -417,7 +435,9 @@ class GuiGame:
                         self.game_over = "win"
                         self.turn_is_mine = False
                     self.awaiting_result = False
-                    self.turn_is_mine = False if self.game_over is None else self.turn_is_mine
+                    # If not game over: keep turn on hit, pass turn on miss
+                    if self.game_over is None:
+                        self.turn_is_mine = True if hit else False
                 elif mtype == "fire":
                     r = int(msg.get("row"))
                     c = int(msg.get("col"))
@@ -433,7 +453,15 @@ class GuiGame:
                         self.game_over = "lose"
                         self.turn_is_mine = False
                     else:
-                        self.turn_is_mine = True
+                        # I get the turn only if opponent missed
+                        self.turn_is_mine = (not hit)
+                elif mtype == "restart":
+                    self.restart_requested_remote = True
+                    if self.game_over is None:
+                        # Inform user even if they haven't finished
+                        self.show_message("Opponent requested a rematch. Finish this round or press N.", 3.0)
+                    else:
+                        self.show_message("Opponent requested a rematch. Press N to accept.", 3.0)
                 elif mtype == "quit":
                     self.show_message("Opponent left the game.", 4.0)
                     self.game_over = self.game_over or "win"
@@ -445,17 +473,49 @@ class GuiGame:
                 self.info_message = "Waiting for player to connect..."
 
             # Transition to gameplay after both placed and start known
-            if placement_done_local and placement_done_remote and (self.mode == "host" or self.you_start is not None):
+            if self.placement_done_local and self.placement_done_remote and (self.mode == "host" or self.you_start is not None):
                 if self.turn_is_mine:
                     self.info_message = "Your turn: click on the right board to fire."
                 else:
                     self.info_message = "Waiting for opponent..."
+
+            # Handle restart when both sides requested it after game over
+            if self.game_over is not None and self.restart_requested_local and self.restart_requested_remote:
+                self._reset_game_state_for_rematch()
 
             self.draw()
             self.clock.tick(60)
 
         self.peer.close()
         pygame.quit()
+
+    def _reset_game_state_for_rematch(self) -> None:
+        # Reset core game state
+        self.my_board = Board()
+        self.opp_known = Board()
+        self.placing_index = 0
+        self.horizontal = True
+        self.awaiting_result = False
+        self.game_over = None
+        self.restart_requested_local = False
+        self.restart_requested_remote = False
+        self.placement_done_local = False
+        self.placement_done_remote = False
+
+        # Determine who starts: host starts again for simplicity
+        if self.mode == "host":
+            # Inform client who starts this round
+            try:
+                self.peer.send({"type": "start", "youStart": False})
+            except Exception:
+                pass
+            self.you_start = False
+            self.turn_is_mine = True
+            self.info_message = "Place your fleet"
+        else:
+            self.you_start = None
+            self.turn_is_mine = None
+            self.info_message = "Place your fleet"
 
 
 # --------------------------- Entrypoints ---------------------------
@@ -486,3 +546,5 @@ def run_client_gui_main() -> None:
     parser.add_argument("--port", type=int, default=5000)
     args = parser.parse_args()
     run_client_gui(host=args.host, port=args.port)
+
+
