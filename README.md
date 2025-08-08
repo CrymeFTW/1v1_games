@@ -1,0 +1,49 @@
+# Battleship (LAN, Terminal)
+
+Two-player Battleship playable over local network in your terminal. One player hosts; the other joins.
+
+- Python 3.9+
+- No external deps; just stdlib (`socket`, `threading`, `select`) and ANSI escape codes
+
+## Features
+- 10x10 classic board, ships: Carrier(5), Battleship(4), Cruiser(3), Submarine(3), Destroyer(2)
+- Guided manual ship placement with orientation
+- Clear boards using ASCII and colors
+- Turn-based over TCP with simple, robust protocol
+- Host/Join flow with reconnect-safe state sync
+
+## Install
+```
+python3 --version
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+## Run
+One of you will HOST (choose who), the other joins.
+
+### Host (Player A)
+1. Find your local IP (e.g., `192.168.1.23`). On macOS/Linux: `ipconfig getifaddr en0` or `ifconfig`.
+2. Start the host:
+```
+python -m battleship host --port 5000
+```
+3. Tell your friend your IP and the port.
+
+### Join (Player B)
+```
+python -m battleship join --host 192.168.1.23 --port 5000
+```
+
+- If your firewall prompts, allow incoming connections for Python.
+
+## Controls
+- During placement: type coordinates like `A1`, `J10` and `R` for rotate (horizontal/vertical)
+- During attack: type target tile `B7`, `E10`
+- Use `q` to quit at any prompt
+
+## Notes
+- Must be on the same LAN/Wi‑Fi. Internet play would require port forwarding or a relay server.
+- The game ends when all ships of a player are sunk. A scoreboard is shown.
+# 1v1_games
