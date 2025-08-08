@@ -1,4 +1,0 @@
-[console_scripts]
-battleship = battleship.gui:run_host_gui_main
-battleship-host = battleship.gui:run_host_gui_main
-battleship-join = battleship.gui:run_client_gui_main
