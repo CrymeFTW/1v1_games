@@ -1,0 +1,2 @@
+[console_scripts]
+versus = versus.cli:main

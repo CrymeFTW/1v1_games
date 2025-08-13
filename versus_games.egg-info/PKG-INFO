@@ -1,3 +1,24 @@
+Metadata-Version: 2.4
+Name: versus-games
+Version: 0.1.0
+Summary: Two-player LAN games (Battleship, Snake) with lobby selection
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Environment :: Console
+Classifier: Intended Audience :: End Users/Desktop
+Classifier: Topic :: Games/Entertainment
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: pygame>=2.5.0
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
+
 # Versus - 1v1 LAN Games
 
 Two-player LAN games with GUI lobby selection. After both players connect, choose from multiple games together.
@@ -12,17 +33,12 @@ Two-player LAN games with GUI lobby selection. After both players connect, choos
 If both players choose the same game in the lobby, that game starts. If they choose differently, a random choice decides.
 
 ## Install
-Recommended (ensures `pygame` is installed and CLI entrypoints are available):
-
 ```
 python3 --version
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
-pip install -e .
 ```
-
-This installs console commands: `battleship`, `battleship-host`, and `battleship-join`.
 
 ## Run
 One player hosts, the other joins.

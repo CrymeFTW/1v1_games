@@ -4,21 +4,19 @@ from setuptools import setup, find_packages
 README = (Path(__file__).parent / "README.md").read_text(encoding="utf-8")
 
 setup(
-    name="lan-battleship",
+    name="versus-games",
     version="0.1.0",
-    description="Two-player Battleship over LAN (GUI)",
+    description="Two-player LAN games (Battleship, Snake) with lobby selection",
     long_description=README,
     long_description_content_type="text/markdown",
-    packages=find_packages(exclude=("tests", "docs", "examples")),
+    packages=find_packages(include=("versus", "versus.*")),
     python_requires=">=3.9",
     install_requires=[
         "pygame>=2.5.0",
     ],
     entry_points={
         "console_scripts": [
-            "battleship=battleship.gui:run_host_gui_main",
-            "battleship-host=battleship.gui:run_host_gui_main",
-            "battleship-join=battleship.gui:run_client_gui_main",
+            "versus=versus.cli:main",
         ]
     },
     classifiers=[
