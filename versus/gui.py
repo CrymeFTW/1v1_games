@@ -306,12 +306,58 @@ class GuiGame:
             color = VICTORY if self.game_over == "win" else DEFEAT
             surf = self.font_big.render(banner, True, color)
             self.screen.blit(surf, (self.screen.get_width() // 2 - surf.get_width() // 2, 8))
+            self.draw_post_buttons()
 
         pygame.display.flip()
 
     def draw_title(self, text: str, x: int, y: int) -> None:
         txt = self.font.render(text, True, TEXT)
         self.screen.blit(txt, (x, y))
+
+    def draw_post_buttons(self) -> None:
+        # Render "Play Again" and "Back to Lobby"
+        w = self.screen.get_width()
+        y = self.screen.get_height() - BOTTOM_BAR + 8
+        buttons: list[tuple[pygame.Rect,str]] = []
+        labels = [("Play Again", "again"), ("Back to Lobby", "lobby")]
+        x = w//2 - 200
+        for label, name in labels:
+            rect = pygame.Rect(x, y, 180, 40)
+            pygame.draw.rect(self.screen, GRID_BG, rect, border_radius=8)
+            txt = self.font.render(label, True, TEXT)
+            self.screen.blit(txt, (rect.x + rect.width//2 - txt.get_width()//2, rect.y + 10))
+            buttons.append((rect, name))
+            x += 200
+        self._post_buttons = buttons
+
+    def _handle_post_action(self, name: str) -> None:
+        if name == 'again':
+            if self.state == 'battleship':
+                # restart battleship setup
+                self.my_board = Board()
+                self.opp_known = Board()
+                self.placing_index = 0
+                self.horizontal = True
+                self.you_start = None
+                self.turn_is_mine = (self.mode == 'host')
+                self.game_over = None
+                if self.mode == 'host':
+                    # resend start for new round
+                    self.peer.send({"type": "start", "youStart": False})
+                self.info_message = "Place your fleet"
+            elif self.state == 'snake':
+                # restart snake
+                self.start_snake()
+        elif name == 'lobby':
+            # return to lobby without disconnecting
+            self.state = 'lobby'
+            self.available_games = ["Battleship", "Snake"]
+            self.my_choice = None
+            self.peer_choice = None
+            self.chosen_game = None
+            self.game_over = None
+            self.sn_status = 'idle'
+            # no special message to peer; lobby is host-driven
 
     def draw_status_bar(self, text: str) -> None:
         if not text:
@@ -427,8 +473,10 @@ class GuiGame:
         self.sn_client_dir = self._snake_block_reverse(self.sn_client_dir, self.sn_client_desired)
 
         # compute new heads
-        new_h = self._snake_apply_dir(self.sn_host_snake[0], self.sn_host_dir)
-        new_c = self._snake_apply_dir(self.sn_client_snake[0], self.sn_client_dir)
+        prev_h = self.sn_host_snake[0]
+        prev_c = self.sn_client_snake[0]
+        new_h = self._snake_apply_dir(prev_h, self.sn_host_dir)
+        new_c = self._snake_apply_dir(prev_c, self.sn_client_dir)
 
         # fruit check
         h_eat = (new_h == self.sn_food)
@@ -470,8 +518,11 @@ class GuiGame:
                 return self.sn_walls['right'] == 'hard'
             return False
 
-        h_wall = wall_hit(new_h, self.sn_host_snake[1])
-        c_wall = wall_hit(new_c, self.sn_client_snake[1])
+        # compute wall collisions using previous heads (safe even if snake length becomes 1 after cut)
+        prev_h2 = prev_h
+        prev_c2 = prev_c
+        h_wall = wall_hit(new_h, prev_h2)
+        c_wall = wall_hit(new_c, prev_c2)
 
         # self-collision: if head appears elsewhere in same snake
         def self_hit(snk: list[tuple[int,int]]) -> bool:
@@ -594,6 +645,7 @@ class GuiGame:
                 msg = "Snake: Draw"
             surf = self.font_big.render(msg, True, VICTORY if self.sn_winner in ('host','client') else TEXT)
             self.screen.blit(surf, (w//2 - surf.get_width()//2, 40))
+            self.draw_post_buttons()
 
     def draw_board(self, rect: pygame.Rect, board: Board, reveal: bool) -> None:
         pygame.draw.rect(self.screen, GRID_BG, rect, border_radius=8)
@@ -694,6 +746,7 @@ class GuiGame:
         self.recv_buffer: List[dict] = []
         placement_done_local = False
         placement_done_remote = False
+        self._post_buttons: list[tuple[pygame.Rect,str]] = []
 
         while self.running:
             for event in pygame.event.get():
@@ -720,6 +773,11 @@ class GuiGame:
                         else:
                             if event.button == 1:
                                 self.click_fire(event.pos)
+                    elif (self.state == 'battleship' and self.game_over) or (self.state == 'snake' and self.sn_status == 'over'):
+                        # handle post-game buttons
+                        for rect, name in self._post_buttons:
+                            if rect.collidepoint(event.pos):
+                                self._handle_post_action(name)
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         try:
