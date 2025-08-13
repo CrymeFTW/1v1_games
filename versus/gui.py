@@ -184,10 +184,19 @@ class GuiGame:
         self.sn_client_dir = 'L'
         self.sn_host_desired = 'R'
         self.sn_client_desired = 'L'
-        self.sn_tick = 0.10  # seconds per tick
+        self.sn_tick = 0.10  # seconds per tick (dynamic)
+        self.sn_base_tick = 0.12
+        self.sn_min_tick = 0.05
+        self.sn_tick_factor = 0.007  # faster per point of max score
         self.sn_next_tick = time.time() + 9999  # inactive until init
         self.sn_status = 'idle'  # 'idle'|'ongoing'|'over'
         self.sn_winner = None
+        # Walls: states per side: 'hard'|'green'|'blink'
+        self.sn_walls: dict[str,str] = {'top':'hard','bottom':'hard','left':'hard','right':'hard'}
+        self.sn_wall_meta: dict[str,dict] = {}
+        self.sn_blink_duration = 2.0
+        self.sn_green_duration_range = (6.0, 10.0)
+        self.sn_next_wall_event = time.time() + 9999
 
     # --------------------------- Utility ---------------------------
     def show_message(self, text: str, seconds: float = 2.0) -> None:
@@ -322,6 +331,12 @@ class GuiGame:
             self.sn_host_desired = 'R'
             self.sn_client_desired = 'L'
             self.sn_food = self._snake_spawn_food()
+            self.sn_scores = {'host': 0, 'client': 0}
+            # walls initial
+            self.sn_walls = {'top':'hard','bottom':'hard','left':'hard','right':'hard'}
+            self.sn_wall_meta = {}
+            self.sn_next_wall_event = time.time() + random.uniform(*self.sn_green_duration_range)
+            self._snake_update_tick()
             # send init
             self.peer.send({
                 'type': 'snake_init',
@@ -345,6 +360,7 @@ class GuiGame:
         return random.choice(choices) if choices else (0, 0)
 
     def _snake_wrap(self, r: int, c: int) -> tuple[int,int]:
+        # wrapping kept for position compute; wall death is handled separately in tick using prev->new crosses
         return (r % self.sn_rows, c % self.sn_cols)
 
     def _snake_apply_dir(self, head: tuple[int,int], d: str) -> tuple[int,int]:
@@ -352,6 +368,41 @@ class GuiGame:
         dr, dc = drdc.get(d, (0, 0))
         nr, nc = head[0] + dr, head[1] + dc
         return self._snake_wrap(nr, nc)
+
+    def _snake_update_tick(self) -> None:
+        # Tick speed scales with max score
+        mx = max(self.sn_scores.get('host',0), self.sn_scores.get('client',0))
+        self.sn_tick = max(self.sn_min_tick, self.sn_base_tick - self.sn_tick_factor * mx)
+
+    def _snake_update_walls_lifecycle(self) -> None:
+        now = time.time()
+        # possibly change wall states
+        # Ensure at most 2 green walls simultaneously. Use blink before reverting to hard.
+        # Any green wall that exceeded duration enters blink; after blink it's hard.
+        to_hard = []
+        for side, meta in list(self.sn_wall_meta.items()):
+            state = self.sn_walls.get(side, 'hard')
+            start = meta.get('start', now)
+            duration = meta.get('duration', 0)
+            if state == 'green' and now - start >= duration:
+                # go blink
+                self.sn_walls[side] = 'blink'
+                meta['start'] = now
+            elif state == 'blink' and now - start >= self.sn_blink_duration:
+                to_hard.append(side)
+        for side in to_hard:
+            self.sn_walls[side] = 'hard'
+            self.sn_wall_meta.pop(side, None)
+        # Possibly turn new walls green if less than 2 are active
+        active_green = [s for s in self.sn_walls if self.sn_walls[s] in ('green','blink')]
+        if len(active_green) < 2 and now >= self.sn_next_wall_event:
+            choices = [s for s in self.sn_walls if self.sn_walls[s] == 'hard']
+            if choices:
+                side = random.choice(choices)
+                self.sn_walls[side] = 'green'
+                self.sn_wall_meta[side] = {'start': now, 'duration': random.uniform(*self.sn_green_duration_range)}
+            # schedule next event
+            self.sn_next_wall_event = now + random.uniform(*self.sn_green_duration_range)
 
     def _snake_block_reverse(self, current: str, desired: str) -> str:
         opp = {'U':'D','D':'U','L':'R','R':'L'}
@@ -397,17 +448,37 @@ class GuiGame:
         else:
             self.sn_client_snake.pop()
 
+        # dynamic speed: based on max score
+        self._snake_update_tick()
+
         # if any ate, spawn new food not on snakes
         if h_eat or c_eat:
             self.sn_food = self._snake_spawn_food()
 
         # collisions
+        # wall collisions (hard walls): wrap changed to death unless wall segment is green
+        def wall_hit(pos: tuple[int,int], prev: tuple[int,int]) -> bool:
+            r, c = pos
+            # detect if crossing a wall: compare prev and pos with boundaries
+            if prev[0] == 0 and r == self.sn_rows - 1:  # crossed top wall
+                return self.sn_walls['top'] == 'hard'
+            if prev[0] == self.sn_rows - 1 and r == 0:  # crossed bottom
+                return self.sn_walls['bottom'] == 'hard'
+            if prev[1] == 0 and c == self.sn_cols - 1:  # crossed left
+                return self.sn_walls['left'] == 'hard'
+            if prev[1] == self.sn_cols - 1 and c == 0:  # crossed right
+                return self.sn_walls['right'] == 'hard'
+            return False
+
+        h_wall = wall_hit(new_h, self.sn_host_snake[1])
+        c_wall = wall_hit(new_c, self.sn_client_snake[1])
+
         # self-collision: if head appears elsewhere in same snake
         def self_hit(snk: list[tuple[int,int]]) -> bool:
             return snk[0] in snk[1:]
 
-        h_self = self_hit(self.sn_host_snake)
-        c_self = self_hit(self.sn_client_snake)
+        h_self = h_wall or self_hit(self.sn_host_snake)
+        c_self = c_wall or self_hit(self.sn_client_snake)
 
         # opponent body hit (exclude head-on-head)
         head_on = (new_h == new_c)
@@ -418,7 +489,7 @@ class GuiGame:
             if new_c in self.sn_host_snake:
                 self.sn_host_snake = self._snake_cut_at(self.sn_host_snake, new_c)
 
-        # check lose only for self-collision
+        # check lose only for self-collision (including wall death)
         if h_self and c_self:
             # both crashed into themselves -> draw
             self.sn_status = 'over'
@@ -430,6 +501,9 @@ class GuiGame:
             self.sn_status = 'over'
             self.sn_winner = 'host'
 
+        # walls lifecycle (host controls)
+        self._snake_update_walls_lifecycle()
+
         # send state to client
         self.peer.send({
             'type': 'snake_state',
@@ -439,6 +513,8 @@ class GuiGame:
             'scores': self.sn_scores,
             'status': self.sn_status,
             'winner': self.sn_winner,
+            'walls': self.sn_walls,
+            'tick': self.sn_tick,
         })
 
     def draw_snake_scene(self) -> None:
@@ -474,9 +550,25 @@ class GuiGame:
                 pygame.draw.rect(self.screen, col, (xx + 2, yy + 2, cell - 4, cell - 4), border_radius=6 if i == 0 else 4)
         draw_snake(self.sn_host_snake, (90, 200, 120), (60, 140, 90))
         draw_snake(self.sn_client_snake, (90, 160, 245), (60, 110, 170))
-        # scores
+        # scores and wall indicators
         score_txt = self.font.render(f"A(host): {self.sn_scores['host']}   B(client): {self.sn_scores['client']}", True, TEXT)
         self.screen.blit(score_txt, (PANEL_PADDING, 20))
+        # wall state indicators
+        wx = w - PANEL_PADDING - 220
+        states = []
+        for side in ('top','bottom','left','right'):
+            st = self.sn_walls.get(side, 'hard')
+            if st == 'green':
+                col = (90, 200, 120)
+            elif st == 'blink':
+                # blink color between green and red
+                t = (time.time() * 4) % 2
+                col = (120, 200, 120) if t < 1 else (200, 100, 100)
+            else:
+                col = (200, 80, 80)
+            txt = self.font_small.render(f"{side}: {st}", True, col)
+            self.screen.blit(txt, (wx, 20 + len(states)*20))
+            states.append(side)
         if self.sn_status == 'over':
             if self.sn_winner == 'host':
                 msg = "Snake: Host wins!"
@@ -703,6 +795,13 @@ class GuiGame:
                         self.sn_scores['client'] = int(sc.get('client', self.sn_scores['client']))
                         self.sn_status = msg.get('status', self.sn_status)
                         self.sn_winner = msg.get('winner')
+                        # sync walls/tick info if present
+                        walls = msg.get('walls')
+                        if walls:
+                            self.sn_walls = walls
+                        t = msg.get('tick')
+                        if t:
+                            self.sn_tick = float(t)
                 elif self.state == "battleship":
 
                     if mtype == "place_done":
