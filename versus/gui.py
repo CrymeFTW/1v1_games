@@ -337,6 +337,7 @@ class GuiGame:
         else:
             # client waits for snake_init in message loop
             self.info_message = "Waiting for snake init..."
+            self.state = 'snake'
 
     def _snake_spawn_food(self) -> tuple[int,int]:
         occupied = set(self.sn_host_snake) | set(self.sn_client_snake)
@@ -752,6 +753,19 @@ class GuiGame:
                     chosen = self.my_choice if (self.peer_choice == self.my_choice) else random.choice([self.my_choice, self.peer_choice])
                     self.peer.send({"type": "game_chosen", "game": chosen})
                     self.chosen_game = chosen
+                    # Locally dispatch immediately (host won't receive its own message)
+                    if chosen == "Battleship":
+                        self.my_board = Board()
+                        self.opp_known = Board()
+                        self.placing_index = 0
+                        self.horizontal = True
+                        # Tell client they don't start; host begins
+                        self.peer.send({"type": "start", "youStart": False})
+                        self.turn_is_mine = True
+                        self.state = "battleship"
+                        self.info_message = "Place your fleet"
+                    elif chosen == "Snake":
+                        self.start_snake()
                     self.my_choice = None
 
             # Battleship transitions: after placement
