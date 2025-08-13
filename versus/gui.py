@@ -536,6 +536,22 @@ class GuiGame:
         for c in range(self.sn_cols + 1):
             x = x0 + c * cell
             pygame.draw.line(self.screen, (45, 52, 66), (x, y0), (x, y0 + grid_h))
+        # draw walls as colored borders (green=passable, red=deadly, blink flickers)
+        def wall_color(state: str) -> tuple[int,int,int]:
+            if state == 'green':
+                return (90, 200, 120)
+            if state == 'blink':
+                return (120, 200, 120) if (time.time()*4) % 2 < 1 else (200, 80, 80)
+            return (200, 80, 80)
+        thick = max(4, cell // 6)
+        # top
+        pygame.draw.rect(self.screen, wall_color(self.sn_walls.get('top','hard')), (x0, y0 - thick//2, grid_w, thick))
+        # bottom
+        pygame.draw.rect(self.screen, wall_color(self.sn_walls.get('bottom','hard')), (x0, y0 + grid_h - thick//2, grid_w, thick))
+        # left
+        pygame.draw.rect(self.screen, wall_color(self.sn_walls.get('left','hard')), (x0 - thick//2, y0, thick, grid_h))
+        # right
+        pygame.draw.rect(self.screen, wall_color(self.sn_walls.get('right','hard')), (x0 + grid_w - thick//2, y0, thick, grid_h))
         # food
         fr, fc = self.sn_food
         fx = x0 + fc * cell + cell // 2
