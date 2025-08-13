@@ -637,6 +637,11 @@ class GuiGame:
                                 # client sends desired dir to host
                                 self.peer.send({'type': 'snake_dir', 'dir': d})
 
+            # If hosting and connected, move to lobby immediately
+            if self.mode == 'host' and self.state == 'waiting' and self.peer.connected:
+                self.available_games = ["Battleship", "Snake"]
+                self.state = 'lobby'
+
             # Poll incoming
             msg = self.peer.try_get(0.0)
             while msg is not None:

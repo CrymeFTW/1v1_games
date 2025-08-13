@@ -33,12 +33,17 @@ Two-player LAN games with GUI lobby selection. After both players connect, choos
 If both players choose the same game in the lobby, that game starts. If they choose differently, a random choice decides.
 
 ## Install
+Recommended (ensures `pygame` is installed and CLI entrypoints are available):
+
 ```
 python3 --version
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
+pip install -e .
 ```
+
+This installs console commands: `battleship`, `battleship-host`, and `battleship-join`.
 
 ## Run
 One player hosts, the other joins.
