@@ -174,8 +174,9 @@ class GuiGame:
         self.game_over = None
 
         # Snake-specific
-        self.sn_rows = 18
-        self.sn_cols = 30
+        # Increased play area a bit
+        self.sn_rows = 22
+        self.sn_cols = 36
         self.sn_host_snake: list[tuple[int,int]] = []
         self.sn_client_snake: list[tuple[int,int]] = []
         self.sn_food: tuple[int,int] = (0, 0)
@@ -197,6 +198,26 @@ class GuiGame:
         self.sn_blink_duration = 2.0
         self.sn_green_duration_range = (6.0, 10.0)
         self.sn_next_wall_event = time.time() + 9999
+
+        # Snake: points to win (configurable)
+        self.sn_points_to_win: int = 15
+
+        # Power-ups
+        # List of powerups: { 'type': str, 'pos': (r,c) }
+        self.sn_powerups: list[dict] = []
+        self.sn_next_powerup_time: float = time.time() + 9999
+        # Effects: per-player double points duration
+        self.sn_effects: dict[str, dict] = {
+            'host': {'double_until': 0.0},
+            'client': {'double_until': 0.0},
+        }
+        # Per-player haste effect (forces extra steps for affected opponent)
+        self.sn_effects['host']['haste_until'] = 0.0
+        self.sn_effects['client']['haste_until'] = 0.0
+        self.sn_powerup_durations = {
+            'double_points': 10.0,
+            'haste': 8.0,
+        }
 
     # --------------------------- Utility ---------------------------
     def show_message(self, text: str, seconds: float = 2.0) -> None:
@@ -254,6 +275,14 @@ class GuiGame:
                     txt = self.font.render(f"Opponent chose: {self.peer_choice}", True, SUBTEXT)
                     self.screen.blit(txt, (280, y))
                     y += 30
+                # Snake settings (host adjustable)
+                stxt = self.font_small.render(f"Snake target points: {self.sn_points_to_win}", True, SUBTEXT)
+                self.screen.blit(stxt, (280, y))
+                y += 24
+                if self.mode == 'host':
+                    itxt = self.font_small.render("Host: press '-' / '=' to change", True, SUBTEXT)
+                    self.screen.blit(itxt, (280, y))
+                    y += 24
                 if self.chosen_game:
                     status = self.font.render(f"Selected: {self.chosen_game}", True, SUBTEXT)
                     self.screen.blit(status, (280, y))
@@ -378,6 +407,14 @@ class GuiGame:
             self.sn_client_desired = 'L'
             self.sn_food = self._snake_spawn_food()
             self.sn_scores = {'host': 0, 'client': 0}
+            # reset powerups/effects
+            self.sn_powerups = []
+            now = time.time()
+            self.sn_effects['host']['double_until'] = 0.0
+            self.sn_effects['client']['double_until'] = 0.0
+            self.sn_effects['host']['haste_until'] = 0.0
+            self.sn_effects['client']['haste_until'] = 0.0
+            self.sn_next_powerup_time = now + random.uniform(6.0, 10.0)
             # walls initial
             self.sn_walls = {'top':'hard','bottom':'hard','left':'hard','right':'hard'}
             self.sn_wall_meta = {}
@@ -391,6 +428,7 @@ class GuiGame:
                 'h_snake': self.sn_host_snake,
                 'c_snake': self.sn_client_snake,
                 'food': list(self.sn_food),
+                'pointsToWin': self.sn_points_to_win,
             })
             self.sn_status = 'ongoing'
             self.sn_next_tick = time.time() + self.sn_tick
@@ -401,7 +439,7 @@ class GuiGame:
             self.state = 'snake'
 
     def _snake_spawn_food(self) -> tuple[int,int]:
-        occupied = set(self.sn_host_snake) | set(self.sn_client_snake)
+        occupied = set(self.sn_host_snake) | set(self.sn_client_snake) | {p['pos'] for p in self.sn_powerups}
         choices = [(r, c) for r in range(self.sn_rows) for c in range(self.sn_cols) if (r, c) not in occupied]
         return random.choice(choices) if choices else (0, 0)
 
@@ -419,6 +457,11 @@ class GuiGame:
         # Tick speed scales with max score
         mx = max(self.sn_scores.get('host',0), self.sn_scores.get('client',0))
         self.sn_tick = max(self.sn_min_tick, self.sn_base_tick - self.sn_tick_factor * mx)
+
+        # Apply haste modifiers: make the game run slightly faster while any haste active
+        now = time.time()
+        if now < self.sn_effects['host'].get('haste_until', 0.0) or now < self.sn_effects['client'].get('haste_until', 0.0):
+            self.sn_tick = max(self.sn_min_tick, self.sn_tick * 0.85)
 
     def _snake_update_walls_lifecycle(self) -> None:
         now = time.time()
@@ -486,13 +529,16 @@ class GuiGame:
         self.sn_host_snake.insert(0, new_h)
         self.sn_client_snake.insert(0, new_c)
 
-        # if ate, grow (do not pop tail), else pop
+        # if ate, grow (do not pop tail), else pop; apply double points effect
+        now = time.time()
         if h_eat:
-            self.sn_scores['host'] += 1
+            delta = 2 if now < self.sn_effects['host'].get('double_until', 0.0) else 1
+            self.sn_scores['host'] += delta
         else:
             self.sn_host_snake.pop()
         if c_eat:
-            self.sn_scores['client'] += 1
+            delta = 2 if now < self.sn_effects['client'].get('double_until', 0.0) else 1
+            self.sn_scores['client'] += delta
         else:
             self.sn_client_snake.pop()
 
@@ -502,6 +548,22 @@ class GuiGame:
         # if any ate, spawn new food not on snakes
         if h_eat or c_eat:
             self.sn_food = self._snake_spawn_food()
+
+        # Powerup pickup: if a head lands on a powerup, apply effect
+        def apply_powerup(player: str, other: str, pos: tuple[int,int]) -> None:
+            for i, p in enumerate(list(self.sn_powerups)):
+                if p['pos'] == pos:
+                    ptype = p['type']
+                    self.sn_powerups.pop(i)
+                    if ptype == 'double_points':
+                        self.sn_effects[player]['double_until'] = time.time() + self.sn_powerup_durations['double_points']
+                    elif ptype == 'haste':
+                        # haste the opponent
+                        self.sn_effects[other]['haste_until'] = time.time() + self.sn_powerup_durations['haste']
+                    break
+
+        apply_powerup('host', 'client', new_h)
+        apply_powerup('client', 'host', new_c)
 
         # collisions
         # wall collisions (hard walls): wrap changed to death unless wall segment is green
@@ -531,29 +593,92 @@ class GuiGame:
         h_self = h_wall or self_hit(self.sn_host_snake)
         c_self = c_wall or self_hit(self.sn_client_snake)
 
-        # opponent body hit (exclude head-on-head)
+        # opponent body/ head-on collisions are deadly
         head_on = (new_h == new_c)
-        if not head_on:
-            if new_h in self.sn_client_snake:
-                # cut opponent at hit
-                self.sn_client_snake = self._snake_cut_at(self.sn_client_snake, new_h)
-            if new_c in self.sn_host_snake:
-                self.sn_host_snake = self._snake_cut_at(self.sn_host_snake, new_c)
+        h_hits_opponent = (new_h in self.sn_client_snake)
+        c_hits_opponent = (new_c in self.sn_host_snake)
 
-        # check lose only for self-collision (including wall death)
-        if h_self and c_self:
-            # both crashed into themselves -> draw
+        # Determine outcome precedence: any deadly collision ends round immediately
+        end_now = False
+        if head_on or ((h_self or h_hits_opponent) and (c_self or c_hits_opponent)):
             self.sn_status = 'over'
             self.sn_winner = 'draw'
-        elif h_self:
+            end_now = True
+        elif h_self or h_hits_opponent:
             self.sn_status = 'over'
             self.sn_winner = 'client'
-        elif c_self:
+            end_now = True
+        elif c_self or c_hits_opponent:
             self.sn_status = 'over'
             self.sn_winner = 'host'
+            end_now = True
+
+        # Extra step for hasted players (adds challenge): perform one more move for each hasted player if game not over
+        if not end_now:
+            extra_h = now < self.sn_effects['host'].get('haste_until', 0.0)
+            extra_c = now < self.sn_effects['client'].get('haste_until', 0.0)
+            if extra_h or extra_c:
+                # perform extra substep sequentially to simplify
+                for who in (('host', extra_h), ('client', extra_c)):
+                    if not who[1] or self.sn_status != 'ongoing':
+                        continue
+                    if who[0] == 'host':
+                        prev = self.sn_host_snake[0]
+                        nh = self._snake_apply_dir(prev, self.sn_host_dir)
+                        ate = (nh == self.sn_food)
+                        self.sn_host_snake.insert(0, nh)
+                        if ate:
+                            delta2 = 2 if time.time() < self.sn_effects['host'].get('double_until', 0.0) else 1
+                            self.sn_scores['host'] += delta2
+                            self.sn_food = self._snake_spawn_food()
+                        else:
+                            self.sn_host_snake.pop()
+                        # check collisions against walls/self/opponent
+                        if wall_hit(nh, prev) or nh in self.sn_host_snake[1:] or nh in self.sn_client_snake:
+                            self.sn_status = 'over'
+                            self.sn_winner = 'client'
+                            break
+                    else:
+                        prev = self.sn_client_snake[0]
+                        nc2 = self._snake_apply_dir(prev, self.sn_client_dir)
+                        ate = (nc2 == self.sn_food)
+                        self.sn_client_snake.insert(0, nc2)
+                        if ate:
+                            delta2 = 2 if time.time() < self.sn_effects['client'].get('double_until', 0.0) else 1
+                            self.sn_scores['client'] += delta2
+                            self.sn_food = self._snake_spawn_food()
+                        else:
+                            self.sn_client_snake.pop()
+                        if wall_hit(nc2, prev) or nc2 in self.sn_client_snake[1:] or nc2 in self.sn_host_snake:
+                            self.sn_status = 'over'
+                            self.sn_winner = 'host'
+                            break
+
+        # Points-to-win check (only if not ended by collision)
+        if self.sn_status == 'ongoing':
+            if self.sn_scores['host'] >= self.sn_points_to_win and self.sn_scores['client'] >= self.sn_points_to_win:
+                self.sn_status = 'over'
+                self.sn_winner = 'draw'
+            elif self.sn_scores['host'] >= self.sn_points_to_win:
+                self.sn_status = 'over'
+                self.sn_winner = 'host'
+            elif self.sn_scores['client'] >= self.sn_points_to_win:
+                self.sn_status = 'over'
+                self.sn_winner = 'client'
 
         # walls lifecycle (host controls)
         self._snake_update_walls_lifecycle()
+
+        # spawn powerups occasionally
+        if time.time() >= self.sn_next_powerup_time and len(self.sn_powerups) < 2 and self.sn_status == 'ongoing':
+            # choose a free tile
+            occupied = set(self.sn_host_snake) | set(self.sn_client_snake) | {self.sn_food}
+            free = [(r, c) for r in range(self.sn_rows) for c in range(self.sn_cols) if (r, c) not in occupied]
+            if free:
+                pos = random.choice(free)
+                ptype = random.choice(['double_points', 'haste'])
+                self.sn_powerups.append({'type': ptype, 'pos': pos})
+            self.sn_next_powerup_time = time.time() + random.uniform(8.0, 14.0)
 
         # send state to client
         self.peer.send({
@@ -566,6 +691,9 @@ class GuiGame:
             'winner': self.sn_winner,
             'walls': self.sn_walls,
             'tick': self.sn_tick,
+            'powerups': [{'type': p['type'], 'pos': list(p['pos'])} for p in self.sn_powerups],
+            'effects': self.sn_effects,
+            'pointsToWin': self.sn_points_to_win,
         })
 
     def draw_snake_scene(self) -> None:
@@ -608,6 +736,16 @@ class GuiGame:
         fx = x0 + fc * cell + cell // 2
         fy = y0 + fr * cell + cell // 2
         pygame.draw.circle(self.screen, (250, 210, 90), (fx, fy), max(4, cell // 4))
+        # powerups
+        for p in self.sn_powerups:
+            pr, pc = p['pos']
+            px = x0 + pc * cell + cell // 2
+            py = y0 + pr * cell + cell // 2
+            if p['type'] == 'double_points':
+                color = (180, 90, 250)
+            else:
+                color = (250, 120, 90)
+            pygame.draw.rect(self.screen, color, (px - cell//3, py - cell//3, 2*cell//3, 2*cell//3), border_radius=6)
         # snakes
         def draw_snake(snk: list[tuple[int,int]], head_color: tuple[int,int,int], body_color: tuple[int,int,int]):
             for i, (r, c) in enumerate(snk):
@@ -618,8 +756,27 @@ class GuiGame:
         draw_snake(self.sn_host_snake, (90, 200, 120), (60, 140, 90))
         draw_snake(self.sn_client_snake, (90, 160, 245), (60, 110, 170))
         # scores and wall indicators
-        score_txt = self.font.render(f"A(host): {self.sn_scores['host']}   B(client): {self.sn_scores['client']}", True, TEXT)
+        # show score and target
+        score_txt = self.font.render(f"A(host): {self.sn_scores['host']}   B(client): {self.sn_scores['client']}   Target: {self.sn_points_to_win}", True, TEXT)
         self.screen.blit(score_txt, (PANEL_PADDING, 20))
+        # show active effects timers
+        now = time.time()
+        eff_host = []
+        if now < self.sn_effects['host'].get('double_until', 0.0):
+            eff_host.append(f"2x {(self.sn_effects['host']['double_until']-now):.0f}s")
+        if now < self.sn_effects['host'].get('haste_until', 0.0):
+            eff_host.append(f"Haste {(self.sn_effects['host']['haste_until']-now):.0f}s")
+        eff_client = []
+        if now < self.sn_effects['client'].get('double_until', 0.0):
+            eff_client.append(f"2x {(self.sn_effects['client']['double_until']-now):.0f}s")
+        if now < self.sn_effects['client'].get('haste_until', 0.0):
+            eff_client.append(f"Haste {(self.sn_effects['client']['haste_until']-now):.0f}s")
+        eh = ", ".join(eff_host) or ""
+        ec = ", ".join(eff_client) or ""
+        if eh:
+            self.screen.blit(self.font_small.render(f"Host: {eh}", True, (180,180,250)), (PANEL_PADDING, 44))
+        if ec:
+            self.screen.blit(self.font_small.render(f"Client: {ec}", True, (250,180,180)), (PANEL_PADDING, 64))
         # wall state indicators
         wx = w - PANEL_PADDING - 220
         states = []
@@ -785,6 +942,12 @@ class GuiGame:
                         except Exception:
                             pass
                         self.running = False
+                    # Allow host to adjust snake target points in lobby
+                    if self.state == 'lobby' and self.mode == 'host':
+                        if event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+                            self.sn_points_to_win = max(5, self.sn_points_to_win - 1)
+                        if event.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
+                            self.sn_points_to_win = min(99, self.sn_points_to_win + 1)
                     if self.state == "battleship" and event.key == pygame.K_r and self.placing_index < len(SHIP_TYPES):
                         self.horizontal = not self.horizontal
                     if self.state == 'snake':
@@ -821,6 +984,10 @@ class GuiGame:
                     if mtype == "game_select":
                         # peer's choice arrived; track it
                         self.peer_choice = msg.get("game")
+                    elif mtype == "snake_settings":
+                        ptw = msg.get('pointsToWin')
+                        if ptw:
+                            self.sn_points_to_win = int(ptw)
                     elif mtype == "game_chosen":
                         self.chosen_game = str(msg.get("game"))
                         if self.chosen_game == "Battleship":
@@ -852,6 +1019,9 @@ class GuiGame:
                         if food:
                             self.sn_food = (int(food[0]), int(food[1]))
                         self.sn_scores = {'host': 0, 'client': 0}
+                        ptw = msg.get('pointsToWin')
+                        if ptw:
+                            self.sn_points_to_win = int(ptw)
                         self.sn_status = 'ongoing'
                         self.state = 'snake'
                     elif mtype == 'snake_dir' and self.mode == 'host':
@@ -876,6 +1046,16 @@ class GuiGame:
                         t = msg.get('tick')
                         if t:
                             self.sn_tick = float(t)
+                        # powerups/effects
+                        pwr = msg.get('powerups')
+                        if pwr is not None:
+                            self.sn_powerups = [{'type': p['type'], 'pos': tuple(p['pos'])} for p in pwr]
+                        eff = msg.get('effects')
+                        if eff is not None:
+                            self.sn_effects = eff
+                        ptw2 = msg.get('pointsToWin')
+                        if ptw2:
+                            self.sn_points_to_win = int(ptw2)
                 elif self.state == "battleship":
 
                     if mtype == "place_done":
@@ -925,6 +1105,8 @@ class GuiGame:
                 if self.peer_choice is not None:
                     chosen = self.my_choice if (self.peer_choice == self.my_choice) else random.choice([self.my_choice, self.peer_choice])
                     self.peer.send({"type": "game_chosen", "game": chosen})
+                    # also send current snake settings
+                    self.peer.send({"type": "snake_settings", "pointsToWin": self.sn_points_to_win})
                     self.chosen_game = chosen
                     # Locally dispatch immediately (host won't receive its own message)
                     if chosen == "Battleship":
